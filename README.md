@@ -23,3 +23,5 @@ Current Lines 502 (With secret nukebot 602)
 Time spent on project 1 week
 
 Future Updates: ticket Close request, Tictactoe games, Image manipulation commands like adding logos, creating gifs, Moderation Database To set up a moderattion system, music playing system (bugged atm), anti alt system.
+
+(IF UR HERE FOR NUKEBOT, DONT USE FOR MALICIOUS PURPOSES PLS U CAN CUSTOMISE EVERYTHING AT THE VERY BOTTOM).

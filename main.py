@@ -401,7 +401,62 @@ async def purge_messages(interaction: discord.Interaction, number: int):
     await interaction.response.send_message(f"Deleted {len(deleted_messages)} messages.")
 
 
+afk_statuses = {} # Saves all the AFK statues + user ID 
+@bot.tree.command(name="afk", description="Set an AFK status shown when you're mentioned, and display in nickname.", guild=GUILD_ID)
+@app_commands.describe(message="Message to set")
+async def set_afk(interaction: discord.Interaction, message: str):
+    user = interaction.user
+    afk_statuses[user.id] = message
+    await interaction.user.edit(nick=f"[AFK] {interaction.user.name}")
 
+    await interaction.response.send_message(f"AFK status set: {message}", ephemeral=True)
+
+@bot.event
+async def on_message(message):
+        if message.author.bot:
+            return
+        
+        for user_id, afk_message in afk_statuses.items(): # A loop that has 3 parameters user id, the message and its iterating inside the afk statuses.
+            user = message.guild.get_member(user_id) # it will get the members user id this is so I can tell whether the person who gets pinged is afk or not
+            if user and user.mention in message.content: # Checks member who mentioned is an afk member basically
+                await message.channel.send(f"{user.mention} is AFK: {afk_message}") # Once this condition is met so gets pinged it will show off our afk message.
+                break
+
+        if message.author.id in afk_statuses: # Check if the message is from a AFK user
+            del afk_statuses[message.author.id] # Deletes the user id from the dictionary
+            await message.channel.send(f"{message.author.mention} is no longer AFK welcome back.")
+            await message.author.edit(nick=message.author.name) # Changes nickname and sends a welcome back message.
+
+# Welcome and leave command, Some fun text commands, Game commands , Moderation system, Close-request, Mute command, Lock channel command
+# message and level leaderboard system, Server stats, fix music command, anti ghost-ping system, anti mass pinging, suggestion command
+
+@bot.tree.command(name="dog", description="get a random dog image", guild=GUILD_ID)
+async def dog_image(interaction: discord.Interaction):
+    async with aiohttp.ClientSession() as session: # Creates an asynchronous HTTP session that allows for easy HTTP requests. Session is the object used for requests
+        async with session.get("https://dog.ceo/api/breeds/image/random") as random_dog_image: # Makes a get request to the dog API for a random image url of a dog!
+            data = await random_dog_image.text() # Reads teh response text (json data)
+            dogspic = json.loads(data) # Parses the JSON data into a python dictionary
+
+            embed = discord.Embed()
+            embed.set_image(url=dogspic['message']) # Sets the image URL in the embed to the URL of a random dog image retrieved from the API
+            await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="discordstatus", description="Get the current status of discord.", guild=GUILD_ID)
+async def discord_status(interaction: discord.Interaction):
+    async with aiohttp.ClientSession() as status:
+        async with status.get("https://discordstatus.com/api/v2/summary.json") as discord_status:
+            data = await discord_status.text()
+            discord_info = json.loads(data)
+
+            embed = discord.Embed(title="Discord Status", color=discord.Color.blue())
+            embed.add_field(name="System Status", value=discord_info["status"]["description"], inline=False)
+            if discord_info["incidents"]:
+                embed.add_field(name="Current incidents", value="".join([incident["name"] + "\n" for incident in discord_info["incidents"]]), inline=False)
+            else:
+                embed.add_field(name="Current Incidents", value="No Ongoing Incidents", inline=False)
+                
+            await interaction.response.send_message(embed=embed) #  used AI for the embeds cus so long to type, same logic as dog API.
 
 
     

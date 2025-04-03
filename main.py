@@ -451,6 +451,16 @@ async def discord_status(interaction: discord.Interaction):
 
             embed = discord.Embed(title="Discord Status", color=discord.Color.blue())
             embed.add_field(name="System Status", value=discord_info["status"]["description"], inline=False)
+            services = ["API", "CloudFlare", "Gateway", "Desktop", "Web", "Android", "iOS"]
+            for service in services:
+                service_status = discord_info["components"] # Tapping into components (allows us to go into anywhere)
+                status_message = "Operational"
+                for component in service_status:
+                    if service in component["name"]: # We're looking for name and status and once we've found that we make a embed field for each one of htem.
+                        status_message = component["status"]
+
+                embed.add_field(name=f"{service} Status", value=status_message, inline=False)
+
             if discord_info["incidents"]:
                 embed.add_field(name="Current incidents", value="".join([incident["name"] + "\n" for incident in discord_info["incidents"]]), inline=False)
             else:
@@ -458,6 +468,35 @@ async def discord_status(interaction: discord.Interaction):
                 
             await interaction.response.send_message(embed=embed) #  used AI for the embeds cus so long to type, same logic as dog API.
 
+client = Client.from_credentials(client_id, client_secret, redirect_url) # This object will be used to interact with the osu! API.
+
+@bot.tree.command(name="osutop10", description="Get the top 10 osu players STD", guild=GUILD_ID)
+async def discord_status(interaction: discord.Interaction):
+    cursor = None
+    embed = discord.Embed(title="Top 10 osu! players", color=0x00ff00)
+    rankings = client.get_ranking(GameModeStr.STANDARD, RankingType.PERFORMANCE, cursor=cursor) # This line calls the get_ranking method on the client object to fetch rankings for the STD game mode and based on PP aka performance points.
+
+    # Only get the top 10 players
+    for stats in rankings.ranking[:10]:  # Using slicing to get the top 10
+        rank_change = stats.rank_change_since_30_days # This retrieves the rank change for the player compared to their rank 30 days ag
+        line = f"[{'+' if rank_change >= 0 else ''}{rank_change}] {stats.user.username} - #{stats.global_rank} ({stats.pp})  PP" 
+        embed.add_field(name=line, value="\u200b", inline=False) # This adds a new field to the embed. The name is set to the line created previously, and an invisible space character is set as the value. inline=False means the field will not be displayed inline with other fields.
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="osubanchoinfo", description="Get info on a osu user", guild=GUILD_ID)
+@app_commands.describe(user="The user you want to search up (Also takes user ID)")
+async def lookupOsuUser(interaction: discord.Interaction, user: str):
+    users = client.lookup_users([user])
+    if not users:
+        await interaction.response.send_message(f"**🔴 ``{user}`` not found on ``bancho``** ")
+        return
+    
+    osu_user = users[0]
+    embed = discord.Embed(title=f"osu! Standard profile for {osu_user.username}", color=0x000000)
+    
+    await interaction.response.send_message(embed=embed) # IMPORTANT THIS IS A WIP FINISHING THIS WEEK
+# This input will take USER ID AND Username - Figuring out how to use 2 data types at once . (might Turn this Integer and convert it to a string idk)
+# Display on embed Users rank; Country, peak rank, level, PP amount, accuracy, playcount and ranks. 
 
     
 

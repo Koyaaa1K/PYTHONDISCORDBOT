@@ -468,35 +468,73 @@ async def discord_status(interaction: discord.Interaction):
                 
             await interaction.response.send_message(embed=embed) #  used AI for the embeds cus so long to type, same logic as dog API.
 
-client = Client.from_credentials(client_id, client_secret, redirect_url) # This object will be used to interact with the osu! API.
+api = Ossapi(client_id, client_secret)
 
 @bot.tree.command(name="osutop10", description="Get the top 10 osu players STD", guild=GUILD_ID)
 async def discord_status(interaction: discord.Interaction):
-    cursor = None
     embed = discord.Embed(title="Top 10 osu! players", color=0x00ff00)
-    rankings = client.get_ranking(GameModeStr.STANDARD, RankingType.PERFORMANCE, cursor=cursor) # This line calls the get_ranking method on the client object to fetch rankings for the STD game mode and based on PP aka performance points.
+    top10 = api.ranking(GameMode.OSU, RankingType.PERFORMANCE)
 
-    # Only get the top 10 players
-    for stats in rankings.ranking[:10]:  # Using slicing to get the top 10
-        rank_change = stats.rank_change_since_30_days # This retrieves the rank change for the player compared to their rank 30 days ag
-        line = f"[{'+' if rank_change >= 0 else ''}{rank_change}] {stats.user.username} - #{stats.global_rank} ({stats.pp})  PP" 
-        embed.add_field(name=line, value="\u200b", inline=False) # This adds a new field to the embed. The name is set to the line created previously, and an invisible space character is set as the value. inline=False means the field will not be displayed inline with other fields.
+    for i in range(10):
+        username = top10.ranking[i].user.username
+        embed.add_field(name="", value=f"Rank {i + 1}: {username}\n",inline=False)
+
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="osubanchoinfo", description="Get info on a osu user", guild=GUILD_ID)
-@app_commands.describe(user="The user you want to search up (Also takes user ID)")
-async def lookupOsuUser(interaction: discord.Interaction, user: str):
-    users = client.lookup_users([user])
-    if not users:
-        await interaction.response.send_message(f"**🔴 ``{user}`` not found on ``bancho``** ")
+@bot.tree.command(name="stdmapleaderboard", description="Display the global leaderboard of a map (STD ONLY)", guild=GUILD_ID)
+@app_commands.describe(url="the URL / ID of the beat map")
+async def osuMapLeaderboard(interaction: discord.Interaction, url: str):
+    cursor = None
+    embed = discord.Embed() # do this later
+
+@bot.tree.command(name="suggest", description="Suggest something for me to add.", guild=GUILD_ID)
+@app_commands.describe(suggestion="input your suggestion here.")
+async def suggestAFeature(interaction: discord.Interaction, suggestion: str):
+    author = interaction.user
+    user_avatar = author.avatar.url
+
+    suggestembed = discord.Embed(title=f"Suggestion from {author}")
+    suggestembed.set_author(name="", icon_url=user_avatar)
+    suggestembed.add_field(name="", value=f"{suggestion}")
+    suggestembed.set_thumbnail(url=user_avatar)
+
+@bot.tree.command(name="lock", description="locks the channel you're in.", guild=GUILD_ID)
+async def lockChannel(interaction: discord.Interaction):
+    guild = interaction.guild
+    channel = interaction.channel
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("You CANT LOCK CHANNELS.", ephemeral=True)
         return
     
-    osu_user = users[0]
-    embed = discord.Embed(title=f"osu! Standard profile for {osu_user.username}", color=0x000000)
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(send_messages=False)
+    }
+
+    lockembed = discord.Embed()
+    lockembed.add_field(name="", value=f"The channel {channel.mention} has been locked. ✅")
+    await channel.edit(overwrites=overwrites) 
+    await interaction.response.send_message(embed=lockembed)
+
+@bot.tree.command(name="unlock", description="unlocks the channel you're in.", guild=GUILD_ID)
+async def unlockChannel(interaction: discord.Interaction):
+    guild = interaction.guild
+    channel = interaction.channel
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("You CANT UNLOCK CHANNELS.", ephemeral=True)
+        return
     
-    await interaction.response.send_message(embed=embed) # IMPORTANT THIS IS A WIP FINISHING THIS WEEK
-# This input will take USER ID AND Username - Figuring out how to use 2 data types at once . (might Turn this Integer and convert it to a string idk)
-# Display on embed Users rank; Country, peak rank, level, PP amount, accuracy, playcount and ranks. 
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(send_messages=True)
+    }
+
+    lockembed = discord.Embed()
+    lockembed.add_field(name="", value=f"The channel {channel.mention} has been unlocked. ✅")
+    await channel.edit(overwrites=overwrites) 
+    await interaction.response.send_message(embed=lockembed)
+    # Welcome and leave command, Some fun text commands, Game commands , Moderation system, Close-request, Mute command, Lock channel command
+# message and level leaderboard system, Server stats, fix music command, anti ghost-ping system, anti mass pinging, suggestion command
+
+# Tomorrow creating a database for moderation commands and do the osu stuff. + Game feature
 
     
 

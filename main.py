@@ -534,7 +534,147 @@ async def unlockChannel(interaction: discord.Interaction):
     # Welcome and leave command, Some fun text commands, Game commands , Moderation system, Close-request, Mute command, Lock channel command
 # message and level leaderboard system, Server stats, fix music command, anti ghost-ping system, anti mass pinging, suggestion command
 
-# Tomorrow creating a database for moderation commands and do the osu stuff. + Game feature
+@bot.event
+async def on_member_join(member):
+    channel = bot.get_channel(1353758800795930654)
+
+    if channel:
+        await channel.send(f"Welcome to the server {member.mention}")
+
+@bot.event
+async def on_member_remove(member):
+    channel = bot.get_channel(1353758800795930654)
+
+    if channel:
+        await channel.send(f"Goodbye {member.mention} 🤑🤑🤑")
+
+@bot.tree.command(name="image2gif", description="turns ur image into a gif", guild=GUILD_ID)
+@app_commands.describe(imageurl="Put ur image here.")
+async def image2gif(interaction: discord.Interaction, imageurl: str):
+    image_url = imageurl
+    response = requests.get(image_url) # Makes json request to get the image url u input
+    await interaction.response.send_message("Processing your image...") # this is so it doesnt say this app didnt respond
+
+    if response.status_code == 200: # if request succeeded
+        img = Image.open(BytesIO(response.content)) # This line of code opens the image holds the binary content from the HTTP request and bytes creates an in-memory binary stream, allowing the Image.open() function to treat the binary data as a file-like object.
+        img.save("output_image.gif", "GIF")
+        await interaction.followup.send(file=discord.File("output_image.gif")) # essentially retrieves an image from a web response, processes it, and saves it as a GIF.
+    else:
+        interaction.response.send_message("Didnt work nigger")
+
+@bot.tree.command(name="cryptoeth", description="Get the current Ethereum price in USD.", guild=GUILD_ID)
+async def ethprice(interaction: discord.Interaction):
+    url = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
+    async with aiohttp.ClientSession() as price:
+        async with price.get(url) as response:
+            if response.status == 200:
+                data = await response.json()
+                eth_price = data["ethereum"]["usd"]
+
+                embed = discord.Embed(
+                        title="🪙 Ethereum Price",
+                        description=f"The current price of **1 ETH** is **${eth_price:,.2f} USD**.",
+                        color=discord.Color.green()
+                )
+                await interaction.response.send_message(embed=embed)
+            else:
+                await interaction.response.send_message("Failed to fetch ETH price 😢", ephemeral=True)
+
+@bot.tree.command(name="cryptobtc", description="Get the current Bitcoin price in USD.", guild=GUILD_ID)
+async def btcprice(interaction: discord.Interaction):
+    api_call = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+    async with aiohttp.ClientSession() as btcprice:
+        async with btcprice.get(api_call) as response:
+            if response.status == 200:
+                data = await response.json()
+                btc_price = data["bitcoin"]["usd"]
+
+                embed = discord.Embed(
+                    title="🪙 Bitcoin Price",
+                    description=f"The current price of **1 BTC** is **${btc_price:,.2f} USD**.",
+                    color=discord.Color.green()
+                )
+                await interaction.response.send_message(embed=embed)
+            else:
+                await interaction.response.send_message("Failed to fetch BTC price..", ephemeral=True)
+
+@bot.tree.command(name="askllama", description="Ask the AI model llama a question", guild=GUILD_ID)
+@app_commands.describe(input="Put your input here")
+async def askLlama(interaction: discord.Interaction, input: str):
+    ask_llama = client.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": f"{input}"
+            }
+        ],
+        model="llama-3.1-8b-instant",
+    )
+    await interaction.response.send_message(ask_llama.choices[0].message.content)
+
+@bot.tree.command(name="lovemeter", description="lovemeter between two people", guild=GUILD_ID)
+@app_commands.describe(user="first user", user2="second user")
+async def loveMeter(interaction: discord.Interaction, user: discord.Member, user2: discord.Member):
+    rating = random.randint(0, 100)
+    if rating < 40:
+        emoji = "🤮"
+    elif rating < 70:
+        emoji = "💗"
+    else:
+        emoji = "😍"
+    await interaction.response.send_message(f"**{user}** and **{user2}** has a lovemeter of **{rating}%**  {emoji}")
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) #absolkute file
+
+def create_moderation_db():
+    connection = sqlite3.connect(f"{BASE_DIR}\\mod_logs.db")
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS "users_per_guild" (
+            "user_id"  INTEGER,
+            "warning_count" INTEGER,
+            "guild_id" INTEGER,
+            PRIMARY KEY("user_id","guild_id")
+        )
+    """)
+
+    connection.commit()
+    connection.close() # this to avoid SQL injections and the goal of this is to create a moderation table  with the data stored here
+
+create_moderation_db()
+
+def increase_and_get_warnings(user_id: int, guild_id: int):
+    connection = sqlite3.connect(f"{BASE_DIR}\\mod_logs.db")
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT warning_count
+        FROM users_per_guild
+        WHERE (user_id = ?) AND (guild_id = ?); 
+    """, (user_id, guild_id)) # Requesting for warning count for this user with this user id in this guild id.
+
+    result = cursor.fetchone() # check warning count
+
+    if result == None:
+        cursor.execute("""
+            INSERT INTO users_per_guild (user_id, warning_count, guild_id)
+            VALUES (?, 1, ?);
+        """, (user_id, guild_id)) # This inserts a brand new row for this db table and sets the warning count to 1
+
+        connection.commit()
+        connection.close() # as we're changing the data in the DB we use this to avoid SQL injections.
+        return 1 #  it returns 1 to indicate the user now has 1 warning.
+    
+    cursor.execute("""
+        UPDATE users_per_guild
+        SET warning_count = ?
+        WHERE (user_id = ?) AND (guild_id = ?);
+    """, (result[0] + 1, user_id, guild_id))
+    connection.commit()
+    connection.close()
+    return result[0] + 1
+
 
     
 

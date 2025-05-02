@@ -624,7 +624,9 @@ async def loveMeter(interaction: discord.Interaction, user: discord.Member, user
         emoji = "😍"
     await interaction.response.send_message(f"**{user}** and **{user2}** has a lovemeter of **{rating}%**  {emoji}")
 
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) #absolkute file
+banned_words = ["any word u want"]
 
 def create_moderation_db():
     connection = sqlite3.connect(f"{BASE_DIR}\\mod_logs.db")
@@ -634,13 +636,16 @@ def create_moderation_db():
         CREATE TABLE IF NOT EXISTS "users_per_guild" (
             "user_id"  INTEGER,
             "warning_count" INTEGER,
+            "kick_count" INTEGER,
+            "ban_count" INTEGER,
+            "mute_count" INTEGER, 
             "guild_id" INTEGER,
             PRIMARY KEY("user_id","guild_id")
         )
     """)
 
-    connection.commit()
-    connection.close() # this to avoid SQL injections and the goal of this is to create a moderation table  with the data stored here
+    connection.commit() # And think of the modlogs as our file aka our created DB
+    connection.close() #  the goal of this is to create a moderation table  with the data stored here
 
 create_moderation_db()
 
@@ -666,28 +671,196 @@ def increase_and_get_warnings(user_id: int, guild_id: int):
         connection.close() # as we're changing the data in the DB we use this to avoid SQL injections.
         return 1 #  it returns 1 to indicate the user now has 1 warning.
     
+    new_total_warning_count = result[0] + 1 # adds another warning onto ur first warning
+
+    if new_total_warning_count >= 5:
+        new_total_warning_count = 0 # Purpose is to reset the warning count once its past 5!
+
     cursor.execute("""
         UPDATE users_per_guild
         SET warning_count = ?
         WHERE (user_id = ?) AND (guild_id = ?);
-    """, (result[0] + 1, user_id, guild_id))
+    """, (new_total_warning_count, user_id, guild_id)) # Basically this is the else block if they are in the DB add a + 1 warning onto their account
     connection.commit()
     connection.close()
-    return result[0] + 1
+    return new_total_warning_count # sends back the new total warning count
+
+def increase_and_get_kicks(user_id: int, guild_id: int):
+    connection = sqlite3.connect(f"{BASE_DIR}\\mod_logs.db")
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT kick_count
+        FROM users_per_guild
+        WHERE (user_id = ?) AND (guild_id = ?); 
+    """, (user_id, guild_id)) 
+
+    result = cursor.fetchone()
+
+    if result == None:
+        cursor.execute("""
+            INSERT INTO users_per_guild (user_id, kick_count, guild_id)
+            VALUES (?, 1, ?);
+        """, (user_id, guild_id))
+
+        connection.commit()
+        connection.close() 
+        return 1
+
+    current_kick_count = result[0] or 0 
+    new_total_kick_count = current_kick_count + 1
+
+    cursor.execute("""
+        UPDATE users_per_guild
+        SET kick_count = ?
+        WHERE (user_id = ?) AND (guild_id = ?);
+    """, (new_total_kick_count, user_id, guild_id))
+
+    connection.commit()
+    connection.close()
+    return new_total_kick_count
 
 
+def get_warning_count(user_id: int, guild_id: int):
+    connection = sqlite3.connect(f"{BASE_DIR}\\mod_logs.db")
+    cursor = connection.cursor()
     
-
-
-
+    cursor.execute(""" 
+        SELECT warning_count
+        FROM users_per_guild
+        WHERE user_id = ? AND guild_id = ?               
+""", (user_id, guild_id)) # simple db to get warnings (for mod log slash cmd)
     
+    result = cursor.fetchone()
+    connection.close()
     
+    if result is None or result[0] is None:
+        return 0  # Checking to see if theres a warning in the DB and if there isnt to return 0
+
+    return result[0]
 
 
-
-
-
+def get_kick_count(user_id: int, guild_id: int):
+    connection = sqlite3.connect(f"{BASE_DIR}\\mod_logs.db")
+    cursor = connection.cursor()
     
+    cursor.execute("""
+        SELECT kick_count
+        FROM users_per_guild
+        WHERE user_id = ? AND guild_id = ?;
+    """, (user_id, guild_id))
+    
+    result = cursor.fetchone()
+    connection.close()
+    
+    if result is None or result[0] is None:
+        return 0  # No entry or kick count is NULL
+    
+    return result[0]
+
+
+
+
+@bot.event
+async def on_message(msg):
+    if msg.author.id != bot.user.id:
+        for term in banned_words:
+            if term.lower() in msg.content.lower():
+                num_warnings = increase_and_get_warnings(msg.author.id, msg.guild.id)
+                await msg.delete()
+
+                embed = discord.Embed(
+                    title="🚨 Warning Issued",
+                    description=f"{msg.author.mention}, you used a banned word.",
+                    color=discord.Color.orange()
+                )
+                embed.add_field(name="Warning Count", value=f"{num_warnings}/5", inline=False)
+                embed.set_footer(text="Please follow the server rules. (3 WARNS = 1HR MUTE 5 = 3 DAY SERVERBAN)")
+                await msg.channel.send(embed=embed)
+
+                if num_warnings >= 5:
+                    increase_and_get_kicks(msg.author.id, msg.guild.id)
+                    DM_message = "You have been temporarily banned (3 Days) for exceeding warn count."
+                    await msg.author.send(f"{DM_message}")
+                    await msg.guild.kick(msg.author)
+                elif discord.Forbidden:
+                    print(f"Couldn't DM {msg.author}")
+
+
+
+                    
+
+@bot.tree.command(name="warn", description="Warns the user.", guild=GUILD_ID)
+@app_commands.describe(user="user you'd like to warn", reason="The reason for the warn")
+async def warning(interaction: discord.Interaction, user: discord.Member, reason: str):
+    if interaction.user.id == user.id:
+            await interaction.response.send_message("You cannot warn yourself you retarded nigger", ephemeral=True)
+            return
+    warn_count = increase_and_get_warnings(user.id, interaction.guild.id)
+    embed = discord.Embed(
+                    title="🚨 Warning Issued",
+                    description=f"{user.mention} has been successfully warned ✅",
+                    color=discord.Color.green()
+                )
+    embed.add_field(name="Warning Count", value=f"{warn_count}/5", inline=False)
+    embed.add_field(name="Warn reason:", value=f"{reason}", inline=False)
+    embed.set_footer(text="Please follow the server rules. (3 WARNS = 1HR MUTE | 5 = 3 DAY SERVERBAN)")
+    await interaction.response.send_message(embed=embed)
+    if warn_count >= 5:
+        DM_message = "You have been temporarily banned (3 Days) for exceeding warn count."
+        await user.send(DM_message)
+
+
+@bot.tree.command(name="punishmentlog", description="All moderation commands used on a user (SIMPLE)", guild=GUILD_ID)
+@app_commands.describe(user="user you'd like to view")
+async def modlog(interaction: discord.Interaction, user: discord.Member):
+    warn_count = get_warning_count(user.id, interaction.guild.id)
+    kick_count = get_kick_count(user.id, interaction.guild.id)
+    ban_count = 0
+    mute_count = 0
+    embed = discord.Embed(
+                    title=f"🚨 Mod Logs for {user}",
+                    description=f"Shows every moderation action on a user.",
+                    color=discord.Color.green()
+                ) # add kick amount ban amount mute amount
+    embed.add_field(name="WARNS:", value=f" {warn_count} amount of warns.", inline=False)
+    embed.add_field(name="KICKS:", value=f" {kick_count} amount of kicks.", inline=False)
+    embed.add_field(name="BANS:", value=f" {ban_count} amount of bans.", inline=False)
+    embed.add_field(name="MUTES:", value=f" {mute_count} amount of mutes.", inline=False)
+    await interaction.response.send_message(embed=embed)
+    
+@bot.tree.command(name="snipermonkey", description="adds the snipermonkey PFP onto ur image", guild=GUILD_ID)
+@app_commands.describe(url="Link to the image")
+async def snipermonkeyLogo(interaction: discord.Interaction, url: str):
+    image_url = url
+    response = requests.get(image_url) 
+    await interaction.response.send_message("Processing your image...") 
+
+    if response.status_code == 200:
+        img = Image.open(BytesIO(response.content)).convert("RGBA") # loads the image using PIL. RGBA Is so supports transparency cus of error i got
+
+        overlay_url = "https://media.discordapp.net/attachments/1313160789611380756/1366814382444646521/fa15d90c3bc79f2b884aef6d916feb8b.png?ex=68125096&is=6810ff16&hm=4da68487060540b0535129ddcad3a05abf1abf79b90aaa24622a754fc62b0b28&=&format=webp&quality=lossless&width=192&height=192"
+        snipermonkey_req = requests.get(overlay_url)
+        snipermonkey_req.raise_for_status()
+        overlay = Image.open(BytesIO(snipermonkey_req.content)).convert("RGBA") # Same thing and process, downloads it check for success then opens
+
+        bg_width, bg_height = img.size
+        ov_width, ov_height = overlay.size
+        x = (bg_width - ov_width) // 2
+        y = (bg_height - ov_height) // 2 # Calculation to get the direct center by checking the bg + ov width and height and halfing it.
+        img.paste(overlay, (x, y), overlay) # Pastes my logo in the coordinates i specified
+
+        output = BytesIO()
+        img.save(output, format="PNG")
+        output.seek(0)
+
+        await interaction.followup.send(file=discord.File(output, "snipermonkey_overlay.png"))
+    else:
+        await interaction.followup.send("❌ Failed to process image:")
+
+
+
+      
 
 #NUKE BOT CMDS WIP
 

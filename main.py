@@ -858,6 +858,60 @@ async def snipermonkeyLogo(interaction: discord.Interaction, url: str):
     else:
         await interaction.followup.send("❌ Failed to process image:")
 
+@bot.tree.command(name="play", description="Play a song or add it to the queue", guild=GUILD_ID)
+@app_commands.describe(song_query="Name of song")
+async def play(interaction: discord.Interaction, song_query: str):
+    await interaction.response.defer()
+
+    async def search_ytdlp_async(query, ydl_opts):
+        loop = asyncio.get_running_loop() # gets all async tasks
+        return await loop.run_in_executor(None, lambda: _extract(query, ydl_opts)) # Runs a function in a background thread so it doesn’t freeze your bot. None means it uses the default thread pool. then a anonymous function that calls _extract
+    
+    def _extract(query, ydl_opts):  # This is a synchronous function because yt_dlp is blocking — you run it in a thread.
+         with yt_dlp.YoutubeDL(ydl_opts) as ydl: # Creates a YoutubeDL object with the given options, using a with block to manage resources (e.g., temp files, logs, etc.).
+             return ydl.extract_info(query, download=False) # Returns the metadata, doesnt download it and uses our query input.
+
+    if not interaction.user.voice or not interaction.user.voice.channel: # checks to see if they arent in VC then sends a warning message
+        await interaction.followup.send("You are not in VC lil nigga.")
+        return
+
+    voice_channel = interaction.user.voice.channel
+    voice_client = interaction.guild.voice_client # this is used to access the voice client associated with the server
+
+    if voice_client is None:
+        voice_client = await voice_channel.connect()
+    elif voice_client.channel != voice_channel:
+        await voice_client.move_to(voice_channel) # Checks to see if the bot sin vc if not connect, if they arent in the right vc then move to the interaction voice channel aka our channel we done the command in
+
+    ydl_options = {
+        "format": "bestaudio[abr<=96]/bestaudio",
+        "noplaylist": True,
+        "youtube_include_dash_manifest": False,
+        "youtube_include_hls_manifest": False,
+    } # settings
+
+    query = "ytsearch1: " + song_query
+    results =  await search_ytdlp_async(query, ydl_options)
+    tracks = results.get("entries", []) # yt_dlp returns a dictionary that wraps the results in an "entries" key when it's a playlist or a search result.
+
+    if tracks is None: # if none dont work use not
+        await interaction.followup.send("No results found.")
+        return
+    
+    first_track = tracks[0] # This grabs the first result from the list of tracks. (there should be only 1 result anyways)
+    audio_url = first_track["url"]
+    title = first_track.get("title", "untitled")
+
+    ffmpeg_options = {
+        "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5", # Settings mainly to handle disconnection, so if it does DC reconnect and has delay timer
+        "options": "-vn -c:a libopus -b:a 96k", # These are passed during the main audio processing. No video libopus audio codec 96k bitrate.
+    }
+    
+    source = discord.FFmpegOpusAudio(audio_url, **ffmpeg_options, executable="bin\\ffmpeg\\ffmpeg.exe")
+    voice_client.play(source)
+    webpage_url = first_track.get("webpage_url", "No URL available")
+    await interaction.followup.send(f"🎶 Now playing: [{title}]({webpage_url})")
+
 
 
       

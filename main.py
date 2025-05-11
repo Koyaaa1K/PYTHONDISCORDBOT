@@ -739,6 +739,26 @@ def get_warning_count(user_id: int, guild_id: int):
 
     return result[0]
 
+def remove_warnings(user_id: int, guild_id: int):
+    connection = sqlite3.connect(f"{BASE_DIR}\\mod_logs.db")
+    cursor = connection.cursor() # DO ASAP
+    cursor.execute(""" 
+        SELECT warning_count
+        FROM users_per_guild
+        WHERE user_id = ? AND guild_id = ?               
+""", (user_id, guild_id))
+    
+    result = cursor.fetchone()
+
+    if result and result[0] > 0:
+        cursor.execute(""" 
+        UPDATE users_per_guild
+        SET warning_count = warning_count - 1
+        WHERE user_id = ? AND guild_id = ?               
+""", (user_id, guild_id))
+        connection.commit()
+    connection.close()
+
 
 def get_kick_count(user_id: int, guild_id: int):
     connection = sqlite3.connect(f"{BASE_DIR}\\mod_logs.db")
@@ -858,10 +878,29 @@ async def snipermonkeyLogo(interaction: discord.Interaction, url: str):
     else:
         await interaction.followup.send("❌ Failed to process image:")
 
+sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials( # Change this auth to oauth method once i create a flask server
+    client_id="SECRET",
+    client_secret="SECRET",  
+))
+
+def get_spotify_track_query(song_query: str):
+    spotify_track_pattern = r"https?://open\.spotify\.com/track/[a-zA-Z0-9]+"
+    if re.match(spotify_track_pattern, song_query):
+        track_info = sp.track(song_query)
+        title = track_info['name']
+        artist = track_info['artists'][0]['name']
+        return f"{title} {artist}"
+    return song_query # Will have to make a flask server To authenticate logins to make more commands (fastest way)
+
+
+SONG_QUEUES = {}
+
 @bot.tree.command(name="play", description="Play a song or add it to the queue", guild=GUILD_ID)
 @app_commands.describe(song_query="Name of song")
 async def play(interaction: discord.Interaction, song_query: str):
     await interaction.response.defer()
+
+    
 
     async def search_ytdlp_async(query, ydl_opts):
         loop = asyncio.get_running_loop() # gets all async tasks
@@ -882,6 +921,9 @@ async def play(interaction: discord.Interaction, song_query: str):
         voice_client = await voice_channel.connect()
     elif voice_client.channel != voice_channel:
         await voice_client.move_to(voice_channel) # Checks to see if the bot sin vc if not connect, if they arent in the right vc then move to the interaction voice channel aka our channel we done the command in
+    
+    search_query = get_spotify_track_query(song_query)
+    query = f"ytsearch1: {search_query}"
 
     ydl_options = {
         "format": "bestaudio[abr<=96]/bestaudio",
@@ -890,7 +932,6 @@ async def play(interaction: discord.Interaction, song_query: str):
         "youtube_include_hls_manifest": False,
     } # settings
 
-    query = "ytsearch1: " + song_query
     results =  await search_ytdlp_async(query, ydl_options)
     tracks = results.get("entries", []) # yt_dlp returns a dictionary that wraps the results in an "entries" key when it's a playlist or a search result.
 
@@ -902,15 +943,141 @@ async def play(interaction: discord.Interaction, song_query: str):
     audio_url = first_track["url"]
     title = first_track.get("title", "untitled")
 
-    ffmpeg_options = {
-        "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5", # Settings mainly to handle disconnection, so if it does DC reconnect and has delay timer
-        "options": "-vn -c:a libopus -b:a 96k", # These are passed during the main audio processing. No video libopus audio codec 96k bitrate.
-    }
+    guild_id = str(interaction.guild.id)
+    if SONG_QUEUES.get(guild_id) is None:
+        SONG_QUEUES[guild_id] = deque()
+
+    SONG_QUEUES[guild_id].append((audio_url, title))
     
-    source = discord.FFmpegOpusAudio(audio_url, **ffmpeg_options, executable="bin\\ffmpeg\\ffmpeg.exe")
-    voice_client.play(source)
     webpage_url = first_track.get("webpage_url", "No URL available")
-    await interaction.followup.send(f"🎶 Now playing: [{title}]({webpage_url})")
+    if voice_client.is_playing() or voice_client.is_paused():
+        embed = discord.Embed(
+        title="✅ Added to Queue",
+        description=f"{title}",
+        color=Color.orange()
+        )
+        await interaction.followup.send(embed=embed)
+    else:
+        await interaction.followup.send(f"🎶 Now playing: [{title}]({webpage_url})")
+        await play_next_song(voice_client, guild_id, interaction.channel)
+
+@bot.tree.command(name="skip", description="Skips the current playing song", guild=GUILD_ID)
+async def skip(interaction: discord.Interaction):
+    if interaction.guild.voice_client and (interaction.guild.voice_client.is_playing() or interaction.guild.voice_client.is_paused()):
+        interaction.guild.voice_client.stop()
+        await interaction.response.send_message("Skipped the current song.") # if user isnt admin Create a vote system check if vote count > 3 then skip
+
+@bot.tree.command(name="pause", description="Pause the currently playing song.", guild=GUILD_ID)
+async def pause(interaction: discord.Interaction):
+    voice_client = interaction.guild.voice_client
+
+    if voice_client is None:
+        return await interaction.response.send_message("I'm not in a voice channel.", ephemeral=True)
+
+    if not voice_client.is_playing():
+        return await interaction.response.send_message("Nothing is currently playing.", ephemeral=True)
+    
+    voice_client.pause()
+    await interaction.response.send_message("Music has been paused. To unpause do /resume")
+
+@bot.tree.command(name="resume", description="Resume the currently paused song.", guild=GUILD_ID)
+async def resume(interaction: discord.Interaction):
+    voice_client = interaction.guild.voice_client
+
+    if voice_client is None:
+        return await interaction.response.send_message("I'm not in a voice channel.")
+
+    if not voice_client.is_paused():
+        return await interaction.response.send_message("I’m not paused right now.")
+    
+    voice_client.resume()
+    await interaction.response.send_message("Music has succesfully been unpaused. Enjoy!", ephemeral=True)
+
+@bot.tree.command(name="stop", description="Stop playback and clear the queue. (ADMIN ONLY)", guild=GUILD_ID)
+async def stop(interaction: discord.Interaction):
+    voice_client = interaction.guild.voice_client
+
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("You cannot Do this command.")
+
+    if not voice_client or not voice_client.is_connected():
+        return await interaction.response.send_message("I'm not connected to any voice channel.")
+
+    # Clear the guild's queue
+    guild_id_str = str(interaction.guild_id)
+    if guild_id_str in SONG_QUEUES:
+        SONG_QUEUES[guild_id_str].clear()
+
+    # If something is playing or paused, stop it
+    if voice_client.is_playing() or voice_client.is_paused():
+        voice_client.stop()
+
+    await voice_client.disconnect()
+
+    await interaction.response.send_message("Stopped playback and disconnected!")
+
+
+
+async def play_next_song(voice_client, guild_id, channel):
+    if SONG_QUEUES[guild_id]:
+        audio_url, title = SONG_QUEUES[guild_id].popleft() # Basically turns these two parameters into a variable (youtube, yo) print(audio_url) - youtube print(title) - yo
+
+        ffmpeg_options = {
+            "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+            "options": "-vn -c:a libopus -b:a 96k",
+            # Remove executable if FFmpeg is in PATH
+        }
+
+        source = discord.FFmpegOpusAudio(audio_url, **ffmpeg_options, executable="bin\\ffmpeg\\ffmpeg.exe")
+
+        def after_play(error):
+            if error:
+                print(f"Error playing {title}: {error}")
+            asyncio.run_coroutine_threadsafe(play_next_song(voice_client, guild_id, channel), bot.loop)
+
+        voice_client.play(source, after=after_play)
+        asyncio.create_task(channel.send(f"Enjoy the music!"))
+    else:
+        await voice_client.disconnect()
+        SONG_QUEUES[guild_id] = deque()
+
+@bot.tree.command(name="queue", description="Show all songs currently in the queue", guild=GUILD_ID)
+async def queue(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
+    queue = SONG_QUEUES.get(guild_id)
+
+    if not queue or len(queue) == 0:
+        await interaction.response.send_message("🎵 The queue is currently empty.", ephemeral=True)
+        return
+    
+    embed = discord.Embed(
+        title="📜 Current Song Queue",
+        description="Here are the songs waiting to be played:",
+        color=discord.Color.blue()
+    )
+
+    for i, (_, title) in enumerate(queue, start=1): # For loop that iterates through the queue dictionary and we unpack the tuple (row) with the title and the enumerate makes a numerical list (1- end of queue) and _ is a placeholder for audiourl and I is the index.
+        embed.add_field(name=f"{i}.", value=title, inline=False)
+        await interaction.response.send_message(embed=embed)
+    # 80% done Create a embed and loop into the song queues to make it numerically in order via adding fields.
+
+@bot.tree.command(name="removewarn", description="Removes a warning off a user.", guild=GUILD_ID)
+@app_commands.describe(user="user you'd like to remove the warn off")
+async def removewarning(interaction: discord.Interaction, user: discord.Member):
+    if interaction.user.id == user.id:
+            await interaction.response.send_message("You cannot warn yourself you retarded nigger", ephemeral=True)
+            return
+    warn_count = get_warning_count(user.id, interaction.guild.id)
+
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("You cannot Do this command.")
+    
+    if warn_count == 0:
+        await interaction.response.send_message("There is no warnings on this user", ephemeral=True)
+        return
+    
+    remove_warnings(user.id, interaction.guild.id)
+    await interaction.response.send_message(f"✅ Removed one warning from {user.mention}. They now have {warn_count - 1} warning(s).", ephemeral=True)
 
 
 
